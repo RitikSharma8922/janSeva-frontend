@@ -27,16 +27,27 @@ export default function Register() {
     setError("");
     setLoading(true);
 
-    const result = await registerCitizen(form);
+    try {
+      const result = await registerCitizen(
+        form.name,
+        form.email,
+        form.phone,
+        form.password
+      );
 
-    if (!result.ok) {
-      setError(result.error);
+      if (!result.ok) {
+        setError(result.error || "Registration failed");
+        setLoading(false);
+        return;
+      }
+
       setLoading(false);
-      return;
+      navigate("/user-dashboard");
+    } catch (err) {
+      console.error(err);
+      setError("Unable to connect to server");
+      setLoading(false);
     }
-
-    setLoading(false);
-    navigate("/user-dashboard");
   }
 
   return (
@@ -61,6 +72,7 @@ export default function Register() {
             <label className="mb-1 block text-sm font-medium text-ink">
               Full Name
             </label>
+
             <input
               type="text"
               required
@@ -74,6 +86,7 @@ export default function Register() {
             <label className="mb-1 block text-sm font-medium text-ink">
               Email
             </label>
+
             <input
               type="email"
               required
@@ -87,6 +100,7 @@ export default function Register() {
             <label className="mb-1 block text-sm font-medium text-ink">
               Mobile Number
             </label>
+
             <input
               type="tel"
               required
@@ -100,6 +114,7 @@ export default function Register() {
             <label className="mb-1 block text-sm font-medium text-ink">
               Password
             </label>
+
             <input
               type="password"
               required
