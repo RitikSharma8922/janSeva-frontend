@@ -20,7 +20,10 @@ async function apiRequest(path, options = {}) {
     if (!response.ok) {
       return {
         ok: false,
-        error: data.error || `Request failed with status ${response.status}`,
+        error:
+          data.error ||
+          data.message ||
+          `Request failed with status ${response.status}`,
       };
     }
 
@@ -29,6 +32,8 @@ async function apiRequest(path, options = {}) {
       data,
     };
   } catch (error) {
+    console.error("API Error:", error);
+
     return {
       ok: false,
       error: "Unable to connect to server.",
@@ -48,6 +53,7 @@ export function AppProvider({ children }) {
   const [complaints, setComplaints] = useState([]);
   const [notifications, setNotifications] = useState([]);
 
+  // Save logged-in user in localStorage
   useEffect(() => {
     if (currentUser) {
       localStorage.setItem("janSevaUser", JSON.stringify(currentUser));
@@ -56,6 +62,7 @@ export function AppProvider({ children }) {
     }
   }, [currentUser]);
 
+  // Fetch complaints
   async function fetchComplaints() {
     const result = await apiRequest("/complaints");
 
@@ -66,10 +73,13 @@ export function AppProvider({ children }) {
     return result;
   }
 
+  // Fetch notifications
   async function fetchNotifications() {
     if (!currentUser) return;
 
-    let path = `/notifications?role=${currentUser.role}`;
+    let path = `/notifications?role=${encodeURIComponent(
+      currentUser.role
+    )}`;
 
     if (currentUser.role === "citizen") {
       path += `&email=${encodeURIComponent(currentUser.email || "")}`;
@@ -84,6 +94,7 @@ export function AppProvider({ children }) {
     return result;
   }
 
+  // Load data whenever user changes
   useEffect(() => {
     if (!currentUser) {
       setComplaints([]);
@@ -95,6 +106,9 @@ export function AppProvider({ children }) {
     fetchNotifications();
   }, [currentUser]);
 
+  // =========================
+  // CITIZEN LOGIN
+  // =========================
   async function loginCitizen(emailOrPhone, password) {
     const result = await apiRequest("/auth/citizen/login", {
       method: "POST",
@@ -132,6 +146,9 @@ export function AppProvider({ children }) {
     };
   }
 
+  // =========================
+  // CITIZEN REGISTER
+  // =========================
   async function registerCitizen(name, email, phone, password) {
     const result = await apiRequest("/auth/citizen/register", {
       method: "POST",
@@ -171,6 +188,9 @@ export function AppProvider({ children }) {
     };
   }
 
+  // =========================
+  // GOVERNMENT LOGIN
+  // =========================
   async function loginGovernment(id, password) {
     const result = await apiRequest("/auth/government/login", {
       method: "POST",
@@ -207,10 +227,16 @@ export function AppProvider({ children }) {
     };
   }
 
+  // =========================
+  // LOGOUT
+  // =========================
   function logout() {
     setCurrentUser(null);
   }
 
+  // =========================
+  // CREATE COMPLAINT
+  // =========================
   async function createComplaint(complaintData) {
     const result = await apiRequest("/complaints", {
       method: "POST",
@@ -227,6 +253,9 @@ export function AppProvider({ children }) {
     return result;
   }
 
+  // =========================
+  // UPDATE COMPLAINT STATUS
+  // =========================
   async function updateComplaintStatus(id, statusData) {
     const result = await apiRequest(`/complaints/${id}/status`, {
       method: "PATCH",
