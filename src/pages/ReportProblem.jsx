@@ -1,50 +1,85 @@
 import React, { useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import {
-  FaLandmark,
-} from "react-icons/fa";
+import { FaLandmark } from "react-icons/fa";
 import {
   MdOutlineMyLocation,
   MdOutlineCloudUpload,
   MdClose,
   MdCheckCircle,
 } from "react-icons/md";
-import {
-  GoogleMap,
-  Marker,
-  useJsApiLoader,
-} from "@react-google-maps/api";
+import { MapContainer, TileLayer, Marker, useMapEvents } from "react-leaflet";
+import L from "leaflet";
 
 import { useApp } from "../context/AppContext.jsx";
 import { CATEGORIES } from "../data/mockData.js";
 
+import "leaflet/dist/leaflet.css";
+
 const MAX_FILE_SIZE_MB = 5;
 
-const mapContainerStyle = {
-  width: "100%",
-  height: "350px",
-  borderRadius: "12px",
-};
+const defaultCenter = [26.4499, 80.3319];
 
-const defaultCenter = {
-  lat: 26.4499,
-  lng: 80.3319,
-};
+const markerIcon = new L.Icon({
+  iconUrl:
+    "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+  iconRetinaUrl:
+    "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
+  shadowUrl:
+    "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+});
+
+function LocationMarker({ coords, onSelect }) {
+  useMapEvents({
+    click(e) {
+      onSelect(e.latlng.lat, e.latlng.lng);
+    },
+  });
+
+  if (!coords) return null;
+
+  return (
+    <Marker
+      position={[coords.lat, coords.lng]}
+      icon={markerIcon}
+    />
+  );
+}
+
+async function getAddressFromCoordinates(lat, lng) {
+  const url =
+    `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(
+      lat
+    )}&lon=${encodeURIComponent(lng)}&zoom=18&addressdetails=1`;
+
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error("Unable to find address");
+  }
+
+  const data = await response.json();
+
+  return data.display_name || "";
+}
 
 export default function ReportProblem() {
   const { currentUser, createComplaint } = useApp();
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
 
-  const { isLoaded, loadError } = useJsApiLoader({
-    googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY,
-  });
-
   const [category, setCategory] = useState(CATEGORIES[0]);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+
   const [location, setLocation] = useState("");
   const [coords, setCoords] = useState(null);
+
   const [photo, setPhoto] = useState(null);
 
   const [fileError, setFileError] = useState("");
@@ -54,6 +89,46 @@ export default function ReportProblem() {
   const [submitted, setSubmitted] = useState(null);
   const [submitError, setSubmitError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  const [addressLoading, setAddressLoading] = useState(false);
+
+  async function selectLocation(latitude, longitude) {
+    const newCoords = {
+      lat: latitude,
+      lng: longitude,
+    };
+
+    setCoords(newCoords);
+    setLocationError("");
+    setAddressLoading(true);
+
+    try {
+      const address = await getAddressFromCoordinates(
+        latitude,
+        longitude
+      );
+
+      if (address) {
+        setLocation(address);
+      } else {
+        setLocation(
+          `Location near ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`
+        );
+      }
+    } catch (error) {
+      console.error("Address lookup error:", error);
+
+      setLocation(
+        `Location near ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`
+      );
+
+      setLocationError(
+        "Address could not be found automatically. You can enter it manually."
+      );
+    } finally {
+      setAddressLoading(false);
+    }
+  }
 
   function handleFile(e) {
     const file = e.target.files?.[0];
@@ -111,19 +186,10 @@ export default function ReportProblem() {
     setLocationError("");
 
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
+      async (pos) => {
         const { latitude, longitude } = pos.coords;
 
-        const newCoords = {
-          lat: latitude,
-          lng: longitude,
-        };
-
-        setCoords(newCoords);
-
-        setLocation(
-          `Lat ${latitude.toFixed(6)}, Lng ${longitude.toFixed(6)}`
-        );
+        await selectLocation(latitude, longitude);
 
         setLocating(false);
       },
@@ -144,24 +210,8 @@ export default function ReportProblem() {
     );
   }
 
-  function handleMapClick(event) {
-    if (!event.latLng) return;
-
-    const latitude = event.latLng.lat();
-    const longitude = event.latLng.lng();
-
-    const newCoords = {
-      lat: latitude,
-      lng: longitude,
-    };
-
-    setCoords(newCoords);
-
-    setLocation(
-      `Lat ${latitude.toFixed(6)}, Lng ${longitude.toFixed(6)}`
-    );
-
-    setLocationError("");
+  async function handleMapClickLocation(latitude, longitude) {
+    await selectLocation(latitude, longitude);
   }
 
   async function handleSubmit(e) {
@@ -172,6 +222,13 @@ export default function ReportProblem() {
     if (!coords) {
       setLocationError(
         "Please select your complaint location on the map or click 'Use My Location'."
+      );
+      return;
+    }
+
+    if (!location.trim()) {
+      setLocationError(
+        "Please enter or select a complaint address."
       );
       return;
     }
@@ -249,23 +306,9 @@ export default function ReportProblem() {
 
             <p>
               <span className="font-semibold">
-                Latitude:
-              </span>{" "}
-              {submitted.lat ?? coords?.lat}
-            </p>
-
-            <p>
-              <span className="font-semibold">
-                Longitude:
-              </span>{" "}
-              {submitted.lng ?? coords?.lng}
-            </p>
-
-            <p>
-              <span className="font-semibold">
                 Status:
               </span>{" "}
-              Pending
+              {submitted.status || "Pending"}
             </p>
 
             <p>
@@ -406,14 +449,14 @@ export default function ReportProblem() {
                 onChange={(e) =>
                   setLocation(e.target.value)
                 }
-                placeholder="Select location on map"
+                placeholder="Click map or use your current location"
                 className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
               />
 
               <button
                 type="button"
                 onClick={useMyLocation}
-                disabled={locating}
+                disabled={locating || addressLoading}
                 className="flex shrink-0 items-center gap-1 rounded-lg border border-brand-500 px-4 text-xs font-semibold text-brand-600 hover:bg-brand-50 disabled:opacity-60"
               >
 
@@ -421,66 +464,66 @@ export default function ReportProblem() {
 
                 {locating
                   ? "Locating..."
+                  : addressLoading
+                  ? "Finding..."
                   : "Use My Location"}
 
               </button>
 
             </div>
 
-            {/* GOOGLE MAP */}
+            {/* OPENSTREETMAP */}
 
             <div className="mt-3 overflow-hidden rounded-xl border border-slate-200">
 
-              {loadError ? (
-                <div className="flex h-[350px] items-center justify-center bg-slate-50 p-5 text-center text-sm text-rose-500">
-                  Google Maps could not be loaded.
-                  Please check your Google Maps API key.
-                </div>
-              ) : !isLoaded ? (
-                <div className="flex h-[350px] items-center justify-center bg-slate-50 text-sm text-slate-500">
-                  Loading Google Map...
-                </div>
-              ) : (
-                <GoogleMap
-                  mapContainerStyle={mapContainerStyle}
-                  center={coords || defaultCenter}
-                  zoom={coords ? 16 : 12}
-                  onClick={handleMapClick}
-                  options={{
-                    streetViewControl: false,
-                    mapTypeControl: false,
-                    fullscreenControl: true,
-                  }}
-                >
-                  {coords && (
-                    <Marker
-                      position={coords}
-                    />
-                  )}
-                </GoogleMap>
-              )}
+              <MapContainer
+                center={
+                  coords
+                    ? [coords.lat, coords.lng]
+                    : defaultCenter
+                }
+                zoom={coords ? 17 : 12}
+                scrollWheelZoom={true}
+                style={{
+                  width: "100%",
+                  height: "350px",
+                }}
+              >
+
+                <TileLayer
+                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                />
+
+                <LocationMarker
+                  coords={coords}
+                  onSelect={handleMapClickLocation}
+                />
+
+              </MapContainer>
 
             </div>
 
             <p className="mt-2 text-xs text-slate-500">
               Click anywhere on the map to select the complaint location.
+              The address will be detected automatically.
             </p>
+
+            {addressLoading && (
+              <p className="mt-2 text-xs font-medium text-brand-600">
+                Finding your address...
+              </p>
+            )}
 
             {coords && (
               <div className="mt-2 rounded-lg bg-mist p-3 text-xs text-slate-600">
 
-                <p>
-                  <span className="font-semibold">
-                    Latitude:
-                  </span>{" "}
-                  {coords.lat.toFixed(6)}
+                <p className="font-semibold text-ink">
+                  Selected Location
                 </p>
 
-                <p>
-                  <span className="font-semibold">
-                    Longitude:
-                  </span>{" "}
-                  {coords.lng.toFixed(6)}
+                <p className="mt-1">
+                  {location || "Finding address..."}
                 </p>
 
               </div>
@@ -569,7 +612,7 @@ export default function ReportProblem() {
 
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || addressLoading}
             className="w-full rounded-lg bg-brand-500 py-3 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-60"
           >
             {submitting
