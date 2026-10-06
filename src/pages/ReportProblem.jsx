@@ -9,15 +9,36 @@ import {
   MdClose,
   MdCheckCircle,
 } from "react-icons/md";
+import {
+  GoogleMap,
+  Marker,
+  useJsApiLoader,
+} from "@react-google-maps/api";
+
 import { useApp } from "../context/AppContext.jsx";
 import { CATEGORIES } from "../data/mockData.js";
 
 const MAX_FILE_SIZE_MB = 5;
 
+const mapContainerStyle = {
+  width: "100%",
+  height: "350px",
+  borderRadius: "12px",
+};
+
+const defaultCenter = {
+  lat: 26.4499,
+  lng: 80.3319,
+};
+
 export default function ReportProblem() {
   const { currentUser, createComplaint } = useApp();
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
+
+  const { isLoaded, loadError } = useJsApiLoader({
+    googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY,
+  });
 
   const [category, setCategory] = useState(CATEGORIES[0]);
   const [title, setTitle] = useState("");
@@ -25,8 +46,11 @@ export default function ReportProblem() {
   const [location, setLocation] = useState("");
   const [coords, setCoords] = useState(null);
   const [photo, setPhoto] = useState(null);
+
   const [fileError, setFileError] = useState("");
+  const [locationError, setLocationError] = useState("");
   const [locating, setLocating] = useState(false);
+
   const [submitted, setSubmitted] = useState(null);
   const [submitError, setSubmitError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -45,7 +69,9 @@ export default function ReportProblem() {
     ];
 
     if (!validTypes.includes(file.type)) {
-      setFileError("Only JPG, JPEG and PNG images are allowed.");
+      setFileError(
+        "Only JPG, JPEG and PNG images are allowed."
+      );
       return;
     }
 
@@ -75,66 +101,113 @@ export default function ReportProblem() {
 
   function useMyLocation() {
     if (!navigator.geolocation) {
-      setFileError(
-        "Geolocation is not supported in this browser."
+      setLocationError(
+        "Geolocation is not supported by this browser."
       );
       return;
     }
 
     setLocating(true);
-    setFileError("");
+    setLocationError("");
 
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const { latitude, longitude } = pos.coords;
 
-        setCoords({
+        const newCoords = {
           lat: latitude,
           lng: longitude,
-        });
+        };
+
+        setCoords(newCoords);
 
         setLocation(
-          `Lat ${latitude.toFixed(4)}, Lng ${longitude.toFixed(4)}`
+          `Lat ${latitude.toFixed(6)}, Lng ${longitude.toFixed(6)}`
         );
 
         setLocating(false);
       },
-      () => {
+      (error) => {
+        console.error("Location error:", error);
+
         setLocating(false);
 
-        setFileError(
-          "Could not fetch your location. Please enter it manually."
+        setLocationError(
+          "Could not fetch your location. Please allow location permission and try again."
         );
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 0,
       }
     );
+  }
+
+  function handleMapClick(event) {
+    if (!event.latLng) return;
+
+    const latitude = event.latLng.lat();
+    const longitude = event.latLng.lng();
+
+    const newCoords = {
+      lat: latitude,
+      lng: longitude,
+    };
+
+    setCoords(newCoords);
+
+    setLocation(
+      `Lat ${latitude.toFixed(6)}, Lng ${longitude.toFixed(6)}`
+    );
+
+    setLocationError("");
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
 
     setSubmitError("");
-    setSubmitting(true);
 
-    const result = await createComplaint({
-      category,
-      title,
-      description,
-      location,
-      lat: coords?.lat,
-      lng: coords?.lng,
-      photo,
-    });
-
-    if (!result.ok) {
-      setSubmitError(
-        result.error || "Unable to submit complaint."
+    if (!coords) {
+      setLocationError(
+        "Please select your complaint location on the map or click 'Use My Location'."
       );
-      setSubmitting(false);
       return;
     }
 
-    setSubmitted(result.data.complaint || result.data);
-    setSubmitting(false);
+    setSubmitting(true);
+
+    try {
+      const result = await createComplaint({
+        category,
+        title,
+        description,
+        location,
+        lat: coords.lat,
+        lng: coords.lng,
+        photo,
+      });
+
+      if (!result.ok) {
+        setSubmitError(
+          result.error || "Unable to submit complaint."
+        );
+        setSubmitting(false);
+        return;
+      }
+
+      setSubmitted(result.data.complaint || result.data);
+      setSubmitting(false);
+    } catch (error) {
+      console.error(error);
+
+      setSubmitError(
+        "Unable to connect to server. Please try again."
+      );
+
+      setSubmitting(false);
+    }
   }
 
   if (submitted) {
@@ -152,6 +225,7 @@ export default function ReportProblem() {
           </h1>
 
           <div className="mt-6 space-y-2 rounded-xl bg-mist p-4 text-left text-sm">
+
             <p>
               <span className="font-semibold">
                 Complaint ID:
@@ -175,6 +249,20 @@ export default function ReportProblem() {
 
             <p>
               <span className="font-semibold">
+                Latitude:
+              </span>{" "}
+              {submitted.lat ?? coords?.lat}
+            </p>
+
+            <p>
+              <span className="font-semibold">
+                Longitude:
+              </span>{" "}
+              {submitted.lng ?? coords?.lng}
+            </p>
+
+            <p>
+              <span className="font-semibold">
                 Status:
               </span>{" "}
               Pending
@@ -186,6 +274,7 @@ export default function ReportProblem() {
               </span>{" "}
               {submitted.date || "Just now"}
             </p>
+
           </div>
 
           <div className="mt-6 flex gap-3">
@@ -246,6 +335,8 @@ export default function ReportProblem() {
           className="mt-6 space-y-5 rounded-2xl border border-slate-100 bg-white p-6"
         >
 
+          {/* CATEGORY */}
+
           <div>
             <label className="mb-1 block text-sm font-medium text-ink">
               Problem Category
@@ -264,6 +355,8 @@ export default function ReportProblem() {
             </select>
           </div>
 
+          {/* TITLE */}
+
           <div>
             <label className="mb-1 block text-sm font-medium text-ink">
               Complaint Title
@@ -278,6 +371,8 @@ export default function ReportProblem() {
               className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
             />
           </div>
+
+          {/* DESCRIPTION */}
 
           <div>
             <label className="mb-1 block text-sm font-medium text-ink">
@@ -294,9 +389,12 @@ export default function ReportProblem() {
             />
           </div>
 
+          {/* LOCATION */}
+
           <div>
+
             <label className="mb-1 block text-sm font-medium text-ink">
-              Location
+              Complaint Location
             </label>
 
             <div className="flex gap-2">
@@ -308,7 +406,7 @@ export default function ReportProblem() {
                 onChange={(e) =>
                   setLocation(e.target.value)
                 }
-                placeholder="Enter your location"
+                placeholder="Select location on map"
                 className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
               />
 
@@ -318,22 +416,94 @@ export default function ReportProblem() {
                 disabled={locating}
                 className="flex shrink-0 items-center gap-1 rounded-lg border border-brand-500 px-4 text-xs font-semibold text-brand-600 hover:bg-brand-50 disabled:opacity-60"
               >
-                <MdOutlineMyLocation />
+
+                <MdOutlineMyLocation size={18} />
 
                 {locating
                   ? "Locating..."
                   : "Use My Location"}
+
               </button>
 
             </div>
+
+            {/* GOOGLE MAP */}
+
+            <div className="mt-3 overflow-hidden rounded-xl border border-slate-200">
+
+              {loadError ? (
+                <div className="flex h-[350px] items-center justify-center bg-slate-50 p-5 text-center text-sm text-rose-500">
+                  Google Maps could not be loaded.
+                  Please check your Google Maps API key.
+                </div>
+              ) : !isLoaded ? (
+                <div className="flex h-[350px] items-center justify-center bg-slate-50 text-sm text-slate-500">
+                  Loading Google Map...
+                </div>
+              ) : (
+                <GoogleMap
+                  mapContainerStyle={mapContainerStyle}
+                  center={coords || defaultCenter}
+                  zoom={coords ? 16 : 12}
+                  onClick={handleMapClick}
+                  options={{
+                    streetViewControl: false,
+                    mapTypeControl: false,
+                    fullscreenControl: true,
+                  }}
+                >
+                  {coords && (
+                    <Marker
+                      position={coords}
+                    />
+                  )}
+                </GoogleMap>
+              )}
+
+            </div>
+
+            <p className="mt-2 text-xs text-slate-500">
+              Click anywhere on the map to select the complaint location.
+            </p>
+
+            {coords && (
+              <div className="mt-2 rounded-lg bg-mist p-3 text-xs text-slate-600">
+
+                <p>
+                  <span className="font-semibold">
+                    Latitude:
+                  </span>{" "}
+                  {coords.lat.toFixed(6)}
+                </p>
+
+                <p>
+                  <span className="font-semibold">
+                    Longitude:
+                  </span>{" "}
+                  {coords.lng.toFixed(6)}
+                </p>
+
+              </div>
+            )}
+
+            {locationError && (
+              <p className="mt-2 text-xs font-medium text-rose-500">
+                {locationError}
+              </p>
+            )}
+
           </div>
 
+          {/* PHOTO */}
+
           <div>
+
             <label className="mb-1 block text-sm font-medium text-ink">
               Upload Problem Photo
             </label>
 
             {!photo ? (
+
               <label className="flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-200 py-8 text-center hover:border-brand-400">
 
                 <MdOutlineCloudUpload
@@ -356,7 +526,9 @@ export default function ReportProblem() {
                 />
 
               </label>
+
             ) : (
+
               <div className="relative w-fit">
 
                 <img
@@ -374,6 +546,7 @@ export default function ReportProblem() {
                 </button>
 
               </div>
+
             )}
 
             {fileError && (
@@ -381,13 +554,18 @@ export default function ReportProblem() {
                 {fileError}
               </p>
             )}
+
           </div>
+
+          {/* SUBMIT ERROR */}
 
           {submitError && (
             <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-500">
               {submitError}
             </p>
           )}
+
+          {/* SUBMIT */}
 
           <button
             type="submit"
