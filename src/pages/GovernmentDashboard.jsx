@@ -9,21 +9,20 @@ export default function GovernmentDashboard() {
 
   const stats = {
     total: complaints.length,
-
     newOnes: complaints.filter(
       (c) => c.status === STATUS.PENDING
     ).length,
-
     progress: complaints.filter(
       (c) => c.status === STATUS.IN_PROGRESS
     ).length,
-
     resolved: complaints.filter(
       (c) => c.status === STATUS.RESOLVED
     ).length,
-
     blockedUsers: users.filter(
       (u) => u.status === "blocked"
+    ).length,
+    highPriority: complaints.filter(
+      (c) => String(c.priority || "").toLowerCase() === "high"
     ).length,
   };
 
@@ -33,6 +32,7 @@ export default function GovernmentDashboard() {
     { label: "In Progress", value: stats.progress },
     { label: "Resolved", value: stats.resolved },
     { label: "Blocked Users", value: stats.blockedUsers },
+    { label: "High Priority", value: stats.highPriority },
   ];
 
   return (
@@ -45,21 +45,20 @@ export default function GovernmentDashboard() {
         </h1>
 
         <p className="mt-1 text-sm text-slate">
-          A city-wide overview of citizen complaints.
+          A city-wide overview of citizen complaints and AI priorities.
         </p>
 
-        <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-5">
-          {CARDS.map((c) => (
+        <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
+          {CARDS.map((card) => (
             <div
-              key={c.label}
+              key={card.label}
               className="rounded-2xl border border-slate-100 bg-white p-5"
             >
               <p className="text-xs font-medium text-slate">
-                {c.label}
+                {card.label}
               </p>
-
               <p className="mt-2 text-3xl font-bold text-ink">
-                {c.value}
+                {card.value}
               </p>
             </div>
           ))}
@@ -67,11 +66,11 @@ export default function GovernmentDashboard() {
 
         <div className="mt-8">
           <h2 className="mb-3 font-display text-lg font-semibold text-ink">
-            Recent complaints
+            All complaints by AI priority
           </h2>
 
           <ComplaintTable
-            complaints={complaints.slice(0, 6)}
+            complaints={complaints}
             showCitizen
             detailsBase="/government/complaint"
           />
