@@ -1,568 +1,331 @@
-import React, {
-  createContext,
-  useContext,
-  useEffect,
-  useState,
-} from "react";
+
+import React, { createContext, useContext, useEffect, useState } from "react";
+import {
+  initialComplaints,
+  initialUsers,
+  initialNotifications,
+  GOV_CREDENTIALS,
+  STATUS,
+  TIMELINE_STEPS,
+} from "../data/mockData.js";
+
+// Keys used in localStorage.
+const KEYS = {
+  complaints: "jan_seva_complaints",
+  users: "jan_seva_users",
+  notifications: "jan_seva_notifications",
+  session: "jan_seva_session",
+};
+
+// Read from localStorage or use initial data.
+function loadOrSeed(key, seed) {
+  const raw = localStorage.getItem(key);
+
+  if (raw) {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return seed;
+    }
+  }
+
+  localStorage.setItem(key, JSON.stringify(seed));
+  return seed;
+}
 
 const AppContext = createContext(null);
 
-const API_URL =
-  import.meta.env.VITE_API_URL ||
-  "http://localhost:4000/api";
-
-// ===============================
-// APP PROVIDER
-// ===============================
-
 export function AppProvider({ children }) {
-  // -------------------------------
-  // Current User
-  // -------------------------------
+  const [complaints, setComplaints] = useState(() =>
+    loadOrSeed(KEYS.complaints, initialComplaints)
+  );
 
-  const [currentUser, setCurrentUser] = useState(() => {
-    const savedUser =
-      localStorage.getItem("jan_seva_session");
+  const [users, setUsers] = useState(() =>
+    loadOrSeed(KEYS.users, initialUsers)
+  );
 
-    if (!savedUser) {
-      return null;
-    }
+  const [notifications, setNotifications] = useState(() =>
+    loadOrSeed(KEYS.notifications, initialNotifications)
+  );
 
-    try {
-      return JSON.parse(savedUser);
-    } catch {
-      return null;
-    }
-  });
+  const [currentUser, setCurrentUser] = useState(() =>
+    loadOrSeed(KEYS.session, null)
+  );
 
-  // -------------------------------
-  // States
-  // -------------------------------
-
-  const [complaints, setComplaints] = useState([]);
-  const [users, setUsers] = useState([]);
-  const [notifications, setNotifications] = useState([]);
-  const [loading, setLoading] = useState(false);
-
-  // -------------------------------
-  // Save User Session
-  // -------------------------------
+  // Save state to localStorage.
+  useEffect(() => {
+    localStorage.setItem(KEYS.complaints, JSON.stringify(complaints));
+  }, [complaints]);
 
   useEffect(() => {
-    if (currentUser) {
-      localStorage.setItem(
-        "jan_seva_session",
-        JSON.stringify(currentUser)
-      );
-    } else {
-      localStorage.removeItem("jan_seva_session");
-    }
+    localStorage.setItem(KEYS.users, JSON.stringify(users));
+  }, [users]);
+
+  useEffect(() => {
+    localStorage.setItem(KEYS.notifications, JSON.stringify(notifications));
+  }, [notifications]);
+
+  useEffect(() => {
+    localStorage.setItem(KEYS.session, JSON.stringify(currentUser));
   }, [currentUser]);
 
-  // ===============================
-  // API REQUEST
-  // ===============================
+  function addNotification(entry) {
+    setNotifications((prev) => [
+      { id: Date.now(), read: false, ...entry },
+      ...prev,
+    ]);
+  }
 
-  async function apiRequest(endpoint, options = {}) {
-    try {
-      const response = await fetch(
-        API_URL + endpoint,
-        {
-          ...options,
+  // ---------- Authentication ----------
 
-          headers: {
-            "Content-Type": "application/json",
-            ...(options.headers || {}),
-          },
-        }
-      );
+  function loginCitizen(emailOrPhone, password) {
+    const user = users.find(
+      (u) =>
+        (u.email === emailOrPhone || u.phone === emailOrPhone) &&
+        u.password === password
+    );
 
-      const data = await response
-        .json()
-        .catch(() => ({}));
-
-      if (!response.ok) {
-        return {
-          ok: false,
-          error:
-            data.error ||
-            data.message ||
-            "Something went wrong.",
-        };
-      }
-
-      return {
-        ok: true,
-        data: data,
-      };
-    } catch (error) {
-      console.error("API Error:", error);
-
+    if (!user) {
       return {
         ok: false,
-        error:
-          "Cannot connect to server. Please check your backend.",
+        error: "Invalid email/mobile or password.",
       };
     }
-  }
 
-  // ===============================
-  // LOAD COMPLAINTS
-  // ===============================
-
-  async function loadComplaints() {
-    const result =
-      await apiRequest("/complaints");
-
-    if (result.ok) {
-      if (Array.isArray(result.data)) {
-        setComplaints(result.data);
-      } else if (
-        Array.isArray(result.data.complaints)
-      ) {
-        setComplaints(result.data.complaints);
-      }
+    if (user.status === "blocked") {
+      return {
+        ok: false,
+        error: "This account has been blocked by the municipal office.",
+      };
     }
 
-    return result;
-  }
-
-  // ===============================
-  // LOAD USERS
-  // ===============================
-
-  async function loadUsers() {
-    const result =
-      await apiRequest("/users");
-
-    if (result.ok) {
-      if (Array.isArray(result.data)) {
-        setUsers(result.data);
-      } else if (
-        Array.isArray(result.data.users)
-      ) {
-        setUsers(result.data.users);
-      }
-    }
-
-    return result;
-  }
-
-  // ===============================
-  // LOAD NOTIFICATIONS
-  // ===============================
-
-  async function loadNotifications(user) {
-    if (!user) {
-      setNotifications([]);
-      return;
-    }
-
-    let endpoint = "";
-
-    if (user.role === "government") {
-      endpoint =
-        "/notifications?role=government";
-    } else {
-      const email = encodeURIComponent(
-        user.email || ""
-      );
-
-      endpoint =
-        "/notifications?role=citizen&email=" +
-        email;
-    }
-
-    const result =
-      await apiRequest(endpoint);
-
-    if (result.ok) {
-      if (Array.isArray(result.data)) {
-        setNotifications(result.data);
-      } else if (
-        Array.isArray(
-          result.data.notifications
-        )
-      ) {
-        setNotifications(
-          result.data.notifications
-        );
-      }
-    }
-  }
-
-  // ===============================
-  // LOAD DATA WHEN USER CHANGES
-  // ===============================
-
-  useEffect(() => {
-    async function loadData() {
-      setLoading(true);
-
-      await loadComplaints();
-
-      if (currentUser) {
-        await loadNotifications(currentUser);
-
-        if (
-          currentUser.role === "government"
-        ) {
-          await loadUsers();
-        }
-      }
-
-      setLoading(false);
-    }
-
-    loadData();
-  }, [currentUser]);
-
-  // ===============================
-  // CITIZEN LOGIN
-  // ===============================
-
-  async function loginCitizen(
-    emailOrPhone,
-    password
-  ) {
-    const result = await apiRequest(
-      "/auth/citizen/login",
-      {
-        method: "POST",
-
-        body: JSON.stringify({
-          emailOrPhone: emailOrPhone,
-          password: password,
-        }),
-      }
-    );
-
-    if (!result.ok) {
-      return result;
-    }
-
-    const user =
-      result.data.user ||
-      result.data.data ||
-      result.data;
-
-    const session = {
+    setCurrentUser({
       role: "citizen",
-      id: user.id,
       email: user.email,
       name: user.name,
-      phone: user.phone,
-    };
-
-    setCurrentUser(session);
-
-    return {
-      ok: true,
-      user: session,
-    };
-  }
-
-  // ===============================
-  // GOVERNMENT LOGIN
-  // ===============================
-
-  async function loginGovernment(
-    id,
-    password
-  ) {
-    const result = await apiRequest(
-      "/auth/government/login",
-      {
-        method: "POST",
-
-        body: JSON.stringify({
-          id: id,
-          password: password,
-        }),
-      }
-    );
-
-    if (!result.ok) {
-      return result;
-    }
-
-    const user =
-      result.data.user ||
-      result.data.data ||
-      result.data;
-
-    const session = {
-      role: "government",
-      id: user.id || id,
-      name:
-        user.name ||
-        "Municipal Officer",
-    };
-
-    setCurrentUser(session);
-
-    return {
-      ok: true,
-      user: session,
-    };
-  }
-
-  // ===============================
-  // CITIZEN REGISTER
-  // ===============================
-
-  async function registerCitizen({
-    name,
-    email,
-    phone,
-    password,
-  }) {
-    const result = await apiRequest(
-      "/auth/citizen/register",
-      {
-        method: "POST",
-
-        body: JSON.stringify({
-          name: name,
-          email: email,
-          phone: phone,
-          password: password,
-        }),
-      }
-    );
-
-    if (!result.ok) {
-      return result;
-    }
-
-    const user =
-      result.data.user ||
-      result.data.data ||
-      result.data;
-
-    const session = {
-      role: "citizen",
       id: user.id,
-      email: user.email || email,
-      name: user.name || name,
-      phone: user.phone || phone,
-    };
+    });
 
-    setCurrentUser(session);
+    return { ok: true };
+  }
+
+  function loginGovernment(id, password) {
+    if (
+      id === GOV_CREDENTIALS.id &&
+      password === GOV_CREDENTIALS.password
+    ) {
+      setCurrentUser({
+        role: "government",
+        id,
+        name: "Municipal Officer",
+      });
+
+      return { ok: true };
+    }
 
     return {
-      ok: true,
-      user: session,
+      ok: false,
+      error: "Invalid Government ID or password.",
     };
   }
 
-  // ===============================
-  // LOGOUT
-  // ===============================
+  function registerCitizen({ name, email, phone, password }) {
+    if (users.some((u) => u.email === email)) {
+      return {
+        ok: false,
+        error: "An account with this email already exists.",
+      };
+    }
+
+    const newUser = {
+      id: `U-${1000 + users.length + 1}`,
+      name,
+      email,
+      phone,
+      password,
+      status: "active",
+    };
+
+    setUsers((prev) => [...prev, newUser]);
+
+    setCurrentUser({
+      role: "citizen",
+      email,
+      name,
+      id: newUser.id,
+    });
+
+    return { ok: true };
+  }
 
   function logout() {
     setCurrentUser(null);
-    setComplaints([]);
-    setUsers([]);
-    setNotifications([]);
   }
 
-  // ===============================
-  // ADD COMPLAINT
-  // ===============================
+  // ---------- Complaints ----------
 
-  async function addComplaint(data) {
-    const result = await apiRequest(
-      "/complaints",
-      {
-        method: "POST",
+  function generateComplaintId() {
+    const year = new Date().getFullYear();
+    const seq = complaints.length + 1;
 
-        body: JSON.stringify({
-          ...data,
+    return `JS-${year}-${String(seq).padStart(3, "0")}`;
+  }
 
-          citizenEmail: currentUser
-            ? currentUser.email
-            : null,
-        }),
-      }
-    );
+  // AI priority, reason and summary are now supported.
+  function addComplaint({
+    category,
+    title,
+    description,
+    location,
+    lat,
+    lng,
+    photo,
+    priority = "Medium",
+    priorityReason = "",
+    summary = "",
+  }) {
+    const id = generateComplaintId();
+    const today = new Date().toISOString().slice(0, 10);
 
-    if (!result.ok) {
-      return result;
-    }
+    const timeline = TIMELINE_STEPS.map((label, i) => ({
+      label,
+      done: i === 0,
+      date: i === 0 ? today : null,
+    }));
 
-    const complaint =
-      result.data.complaint ||
-      result.data.data ||
-      result.data;
+    const complaint = {
+      id,
+      category,
+      title,
+      description,
 
-    setComplaints((prev) => [
-      complaint,
-      ...prev,
-    ]);
+      // Gemini AI fields
+      priority,
+      priorityReason,
+      summary,
 
-    await loadNotifications(currentUser);
+      location,
+      lat: lat ?? null,
+      lng: lng ?? null,
+      photo: photo ?? null,
 
-    return {
-      ok: true,
-      complaint: complaint,
+      status: STATUS.PENDING,
+      citizenName: currentUser?.name || "Citizen",
+      citizenEmail: currentUser?.email,
+      date: today,
+
+      govRemarks: "",
+      resolutionRemarks: "",
+      resolutionPhoto: null,
+      resolutionDate: null,
+      timeline,
     };
+
+    setComplaints((prev) => [complaint, ...prev]);
+
+    addNotification({
+      role: "citizen",
+      email: currentUser?.email,
+      message: `Complaint ${id} submitted successfully.`,
+      date: today,
+    });
+
+    addNotification({
+      role: "government",
+      message: `New complaint ${id} received.`,
+      date: today,
+    });
+
+    return complaint;
   }
 
-  // ===============================
-  // UPDATE COMPLAINT STATUS
-  // ===============================
+  // Update the complaint timeline according to its status.
+  function timelineForStatus(status, existingTimeline, today) {
+    const doneCount =
+      status === STATUS.RESOLVED
+        ? 5
+        : status === STATUS.IN_PROGRESS
+        ? 3
+        : status === STATUS.REJECTED
+        ? 2
+        : 1;
 
-  async function updateComplaintStatus(
-    id,
-    status,
-    extra = {}
-  ) {
-    const result = await apiRequest(
-      "/complaints/" + id + "/status",
-      {
-        method: "PATCH",
+    return TIMELINE_STEPS.map((label, i) => {
+      const already = existingTimeline?.[i];
+      const done = i < doneCount;
 
-        body: JSON.stringify({
-          status: status,
+      return {
+        label,
+        done,
+        date: done ? already?.date || today : already?.date || null,
+      };
+    });
+  }
 
-          govRemarks:
-            extra.govRemarks,
-
-          resolutionRemarks:
-            extra.resolutionRemarks,
-
-          resolutionPhoto:
-            extra.resolutionPhoto,
-        }),
-      }
-    );
-
-    if (!result.ok) {
-      return result;
-    }
-
-    const updatedComplaint =
-      result.data.complaint ||
-      result.data.data ||
-      result.data;
+  function updateComplaintStatus(id, status, extra = {}) {
+    const today = new Date().toISOString().slice(0, 10);
 
     setComplaints((prev) =>
-      prev.map((complaint) => {
-        if (complaint.id === id) {
-          return {
-            ...complaint,
-            ...updatedComplaint,
-          };
-        }
+      prev.map((c) => {
+        if (c.id !== id) return c;
 
-        return complaint;
+        return {
+          ...c,
+          status,
+          govRemarks: extra.govRemarks ?? c.govRemarks,
+          resolutionRemarks:
+            extra.resolutionRemarks ?? c.resolutionRemarks,
+          resolutionPhoto:
+            extra.resolutionPhoto ?? c.resolutionPhoto,
+          resolutionDate:
+            status === STATUS.RESOLVED ? today : c.resolutionDate,
+          timeline: timelineForStatus(status, c.timeline, today),
+        };
       })
     );
 
-    await loadNotifications(currentUser);
+    const complaint = complaints.find((c) => c.id === id);
 
-    return {
-      ok: true,
-      complaint: updatedComplaint,
-    };
+    addNotification({
+      role: "citizen",
+      email: complaint?.citizenEmail,
+      message: `Your complaint ${id} status changed to ${status}.`,
+      date: today,
+    });
   }
 
-  // ===============================
-  // CHANGE USER STATUS
-  // ===============================
+  // ---------- Government-side user management ----------
 
-  async function setUserStatus(
-    userId,
-    status
-  ) {
-    const result = await apiRequest(
-      "/users/" + userId + "/status",
-      {
-        method: "PATCH",
-
-        body: JSON.stringify({
-          status: status,
-        }),
-      }
-    );
-
-    if (!result.ok) {
-      return result;
-    }
-
+  function setUserStatus(userId, status) {
     setUsers((prev) =>
-      prev.map((user) => {
-        if (user.id === userId) {
-          return {
-            ...user,
-            status: status,
-          };
-        }
-
-        return user;
-      })
+      prev.map((u) => (u.id === userId ? { ...u, status } : u))
     );
-
-    return {
-      ok: true,
-    };
   }
-
-  // ===============================
-  // COMPLAINT COUNT
-  // ===============================
 
   function complaintsCountFor(email) {
-    return complaints.filter(
-      (complaint) =>
-        complaint.citizenEmail === email
-    ).length;
+    return complaints.filter((c) => c.citizenEmail === email).length;
   }
-
-  // ===============================
-  // CHECK BLOCKED USER
-  // ===============================
 
   function isBlocked(email) {
-    const user = users.find(
-      (item) => item.email === email
-    );
-
+    const user = users.find((u) => u.email === email);
     return user?.status === "blocked";
   }
-
-  // ===============================
-  // CONTEXT VALUE
-  // ===============================
 
   const value = {
     complaints,
     users,
     notifications,
     currentUser,
-    loading,
-
     loginCitizen,
     loginGovernment,
     registerCitizen,
     logout,
-
     addComplaint,
     updateComplaintStatus,
     setUserStatus,
-
     complaintsCountFor,
     isBlocked,
-
-    loadComplaints,
-    loadUsers,
-    loadNotifications,
   };
-
-  // ===============================
-  // PROVIDER
-  // ===============================
 
   return (
     <AppContext.Provider value={value}>
@@ -571,10 +334,12 @@ export function AppProvider({ children }) {
   );
 }
 
-// ===============================
-// useApp HOOK
-// ===============================
-
 export function useApp() {
-  return useContext(AppContext);
+  const ctx = useContext(AppContext);
+
+  if (!ctx) {
+    throw new Error("useApp must be used inside an AppProvider");
+  }
+
+  return ctx;
 }
