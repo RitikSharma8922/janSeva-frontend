@@ -7,37 +7,132 @@ import {
   MdClose,
   MdCheckCircle,
 } from "react-icons/md";
+import { MapContainer, TileLayer, Marker, useMapEvents } from "react-leaflet";
+import L from "leaflet";
+
 import { useApp } from "../context/AppContext.jsx";
 import { CATEGORIES } from "../data/mockData.js";
 
+import "leaflet/dist/leaflet.css";
+
 const MAX_FILE_SIZE_MB = 5;
 
-// Your deployed backend
-const API_BASE_URL = "https://jan-seva-backend1.onrender.com";
+const defaultCenter = [26.4499, 80.3319];
+
+const markerIcon = new L.Icon({
+  iconUrl:
+    "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+  iconRetinaUrl:
+    "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
+  shadowUrl:
+    "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+});
+
+function LocationMarker({ coords, onSelect }) {
+  useMapEvents({
+    click(e) {
+      onSelect(e.latlng.lat, e.latlng.lng);
+    },
+  });
+
+  if (!coords) return null;
+
+  return (
+    <Marker
+      position={[coords.lat, coords.lng]}
+      icon={markerIcon}
+    />
+  );
+}
+
+async function getAddressFromCoordinates(lat, lng) {
+  const url =
+    `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(
+      lat
+    )}&lon=${encodeURIComponent(lng)}&zoom=18&addressdetails=1`;
+
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error("Unable to find address");
+  }
+
+  const data = await response.json();
+
+  return data.display_name || "";
+}
 
 export default function ReportProblem() {
-  const { currentUser, addComplaint, isBlocked } = useApp();
+  const { currentUser, createComplaint } = useApp();
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
 
   const [category, setCategory] = useState(CATEGORIES[0]);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+
   const [location, setLocation] = useState("");
   const [coords, setCoords] = useState(null);
-  const [photo, setPhoto] = useState(null);
-  const [fileError, setFileError] = useState("");
-  const [locating, setLocating] = useState(false);
-  const [submitted, setSubmitted] = useState(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [aiError, setAiError] = useState("");
 
-  const blocked = currentUser
-    ? isBlocked(currentUser.email)
-    : true;
+  const [photo, setPhoto] = useState(null);
+
+  const [fileError, setFileError] = useState("");
+  const [locationError, setLocationError] = useState("");
+  const [locating, setLocating] = useState(false);
+
+  const [submitted, setSubmitted] = useState(null);
+  const [submitError, setSubmitError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const [addressLoading, setAddressLoading] = useState(false);
+
+  async function selectLocation(latitude, longitude) {
+    const newCoords = {
+      lat: latitude,
+      lng: longitude,
+    };
+
+    setCoords(newCoords);
+    setLocationError("");
+    setAddressLoading(true);
+
+    try {
+      const address = await getAddressFromCoordinates(
+        latitude,
+        longitude
+      );
+
+      if (address) {
+        setLocation(address);
+      } else {
+        setLocation(
+          `Location near ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`
+        );
+      }
+    } catch (error) {
+      console.error("Address lookup error:", error);
+
+      setLocation(
+        `Location near ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`
+      );
+
+      setLocationError(
+        "Address could not be found automatically. You can enter it manually."
+      );
+    } finally {
+      setAddressLoading(false);
+    }
+  }
 
   function handleFile(e) {
     const file = e.target.files?.[0];
+
     if (!file) return;
 
     setFileError("");
@@ -49,8 +144,9 @@ export default function ReportProblem() {
     ];
 
     if (!validTypes.includes(file.type)) {
-      setFileError("Only JPG, JPEG and PNG images are allowed.");
-      e.target.value = "";
+      setFileError(
+        "Only JPG, JPEG and PNG images are allowed."
+      );
       return;
     }
 
@@ -58,13 +154,15 @@ export default function ReportProblem() {
       setFileError(
         `Image must be smaller than ${MAX_FILE_SIZE_MB}MB.`
       );
-      e.target.value = "";
       return;
     }
 
     const reader = new FileReader();
 
-    reader.onload = () => setPhoto(reader.result);
+    reader.onload = () => {
+      setPhoto(reader.result);
+    };
+
     reader.readAsDataURL(file);
   }
 
@@ -78,150 +176,93 @@ export default function ReportProblem() {
 
   function useMyLocation() {
     if (!navigator.geolocation) {
-      setFileError(
-        "Geolocation is not supported in this browser."
+      setLocationError(
+        "Geolocation is not supported by this browser."
       );
       return;
     }
 
     setLocating(true);
+    setLocationError("");
 
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
+      async (pos) => {
         const { latitude, longitude } = pos.coords;
 
-        setCoords({
-          lat: latitude,
-          lng: longitude,
-        });
-
-        setLocation(
-          `Lat ${latitude.toFixed(4)}, Lng ${longitude.toFixed(4)}`
-        );
+        await selectLocation(latitude, longitude);
 
         setLocating(false);
-        setFileError("");
       },
-      () => {
+      (error) => {
+        console.error("Location error:", error);
+
         setLocating(false);
-        setFileError(
-          "Could not fetch your location. Please enter it manually."
+
+        setLocationError(
+          "Could not fetch your location. Please allow location permission and try again."
         );
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 0,
       }
     );
+  }
+
+  async function handleMapClickLocation(latitude, longitude) {
+    await selectLocation(latitude, longitude);
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
 
-    if (blocked || submitting) return;
+    setSubmitError("");
 
-    setSubmitting(true);
-    setAiError("");
-
-    // Safe fallback if the AI service is unavailable.
-    let aiResult = {
-      priority: "Medium",
-      priorityReason:
-        "AI analysis was unavailable. Municipal staff should review this complaint.",
-      summary: `${title.trim()}: ${description.trim()}`.slice(
-        0,
-        500
-      ),
-    };
-
-    try {
-      const response = await fetch(
-        `${API_BASE_URL}/api/ai/priority`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            category,
-            title: title.trim(),
-            description: description.trim(),
-            location: location.trim(),
-          }),
-        }
+    if (!coords) {
+      setLocationError(
+        "Please select your complaint location on the map or click 'Use My Location'."
       );
-
-      if (!response.ok) {
-        throw new Error(
-          `AI service returned HTTP ${response.status}`
-        );
-      }
-
-      const result = await response.json();
-
-      // Support common API response structures.
-      const data =
-        result.data ||
-        result.result ||
-        result.analysis ||
-        result;
-
-      const receivedPriority = String(
-        data.priority || ""
-      ).toLowerCase();
-
-      if (
-        !["high", "medium", "low"].includes(
-          receivedPriority
-        )
-      ) {
-        throw new Error(
-          "AI response did not contain a valid priority."
-        );
-      }
-
-      aiResult = {
-        priority:
-          receivedPriority.charAt(0).toUpperCase() +
-          receivedPriority.slice(1),
-
-        priorityReason:
-          data.priorityReason ||
-          data.priority_reason ||
-          data.reason ||
-          aiResult.priorityReason,
-
-        summary:
-          data.summary ||
-          data.shortSummary ||
-          data.short_summary ||
-          aiResult.summary,
-      };
-    } catch (error) {
-      console.error("AI priority analysis failed:", error);
-
-      setAiError(
-        "AI analysis could not be completed. The complaint will be saved with a Medium fallback priority."
-      );
+      return;
     }
 
+    if (!location.trim()) {
+      setLocationError(
+        "Please enter or select a complaint address."
+      );
+      return;
+    }
+
+    setSubmitting(true);
+
     try {
-      const complaint = addComplaint({
+      const result = await createComplaint({
         category,
-        title: title.trim(),
-        description: description.trim(),
-        location: location.trim(),
-        lat: coords?.lat,
-        lng: coords?.lng,
+        title,
+        description,
+        location,
+        lat: coords.lat,
+        lng: coords.lng,
         photo,
-        priority: aiResult.priority,
-        priorityReason: aiResult.priorityReason,
-        summary: aiResult.summary,
       });
 
-      setSubmitted(complaint);
+      if (!result.ok) {
+        setSubmitError(
+          result.error || "Unable to submit complaint."
+        );
+        setSubmitting(false);
+        return;
+      }
+
+      setSubmitted(result.data.complaint || result.data);
+      setSubmitting(false);
     } catch (error) {
-      console.error("Complaint submission failed:", error);
-      setFileError(
-        "Could not save the complaint. Please try again."
+      console.error(error);
+
+      setSubmitError(
+        "Unable to connect to server. Please try again."
       );
-    } finally {
+
       setSubmitting(false);
     }
   }
@@ -230,6 +271,7 @@ export default function ReportProblem() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-mist px-5">
         <div className="w-full max-w-md rounded-2xl bg-white p-8 text-center shadow-lg">
+
           <MdCheckCircle
             className="mx-auto text-leaf-500"
             size={48}
@@ -239,52 +281,47 @@ export default function ReportProblem() {
             Complaint submitted successfully.
           </h1>
 
-          <div className="mt-6 space-y-3 rounded-xl bg-mist p-4 text-left text-sm">
+          <div className="mt-6 space-y-2 rounded-xl bg-mist p-4 text-left text-sm">
+
             <p>
-              <strong>Complaint ID:</strong> {submitted.id}
+              <span className="font-semibold">
+                Complaint ID:
+              </span>{" "}
+              {submitted.id}
             </p>
 
             <p>
-              <strong>Problem:</strong> {submitted.category}
+              <span className="font-semibold">
+                Problem:
+              </span>{" "}
+              {submitted.category}
             </p>
 
             <p>
-              <strong>Location:</strong> {submitted.location}
+              <span className="font-semibold">
+                Location:
+              </span>{" "}
+              {submitted.location}
             </p>
 
             <p>
-              <strong>Status:</strong> Pending
+              <span className="font-semibold">
+                Status:
+              </span>{" "}
+              {submitted.status || "Pending"}
             </p>
 
             <p>
-              <strong>Submitted:</strong> {submitted.date}
+              <span className="font-semibold">
+                Submitted:
+              </span>{" "}
+              {submitted.date || "Just now"}
             </p>
 
-            <hr className="border-slate-200" />
-
-            <p>
-              <strong>AI Priority:</strong>{" "}
-              {submitted.priority}
-            </p>
-
-            <p>
-              <strong>Priority Reason:</strong>{" "}
-              {submitted.priorityReason}
-            </p>
-
-            <p>
-              <strong>AI Summary:</strong>{" "}
-              {submitted.summary}
-            </p>
           </div>
 
-          {aiError && (
-            <p className="mt-4 rounded-lg bg-amber-50 p-3 text-left text-sm text-amber-800">
-              {aiError}
-            </p>
-          )}
-
           <div className="mt-6 flex gap-3">
+
             <button
               onClick={() =>
                 navigate(`/complaint/${submitted.id}`)
@@ -295,11 +332,14 @@ export default function ReportProblem() {
             </button>
 
             <button
-              onClick={() => navigate("/user-dashboard")}
+              onClick={() =>
+                navigate("/user-dashboard")
+              }
               className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-semibold text-ink hover:bg-mist"
             >
               Dashboard
             </button>
+
           </div>
         </div>
       </div>
@@ -308,189 +348,280 @@ export default function ReportProblem() {
 
   return (
     <div className="min-h-screen bg-mist">
+
       <header className="border-b border-slate-100 bg-white">
         <div className="mx-auto flex max-w-3xl items-center justify-between px-5 py-4">
+
           <Link
             to="/user-dashboard"
             className="flex items-center gap-2 font-display text-lg font-bold text-brand-700"
           >
-            <FaLandmark /> Jan Seva
+            <FaLandmark />
+            Jan Seva
           </Link>
+
         </div>
       </header>
 
       <main className="mx-auto max-w-3xl px-5 py-8">
+
         <h1 className="font-display text-2xl font-bold text-ink">
           Report a Problem
         </h1>
 
         <p className="mt-1 text-sm text-slate">
-          Fill in the details below so a municipal officer can
-          act on it.
+          Fill in the details below so a municipal officer can act on it.
         </p>
 
-        {blocked ? (
-          <div className="mt-6 rounded-xl bg-rose-50 p-5 text-sm text-rose-600">
-            Your account has been blocked, or you need to log
-            in before submitting a complaint.
+        <form
+          onSubmit={handleSubmit}
+          className="mt-6 space-y-5 rounded-2xl border border-slate-100 bg-white p-6"
+        >
+
+          {/* CATEGORY */}
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-ink">
+              Problem Category
+            </label>
+
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
+            >
+              {CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
           </div>
-        ) : (
-          <form
-            onSubmit={handleSubmit}
-            className="mt-6 space-y-5 rounded-2xl border border-slate-100 bg-white p-6"
-          >
-            <div>
-              <label className="mb-1 block text-sm font-medium text-ink">
-                Problem Category
-              </label>
 
-              <select
-                required
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
-              >
-                {CATEGORIES.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </div>
+          {/* TITLE */}
 
-            <div>
-              <label className="mb-1 block text-sm font-medium text-ink">
-                Complaint Title
-              </label>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-ink">
+              Complaint Title
+            </label>
+
+            <input
+              type="text"
+              required
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Garbage has not been collected for 5 days"
+              className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
+            />
+          </div>
+
+          {/* DESCRIPTION */}
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-ink">
+              Description
+            </label>
+
+            <textarea
+              required
+              rows={5}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Describe the problem in detail..."
+              className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
+            />
+          </div>
+
+          {/* LOCATION */}
+
+          <div>
+
+            <label className="mb-1 block text-sm font-medium text-ink">
+              Complaint Location
+            </label>
+
+            <div className="flex gap-2">
 
               <input
                 type="text"
                 required
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="Garbage has not been collected for 5 days"
+                value={location}
+                onChange={(e) =>
+                  setLocation(e.target.value)
+                }
+                placeholder="Click map or use your current location"
                 className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
               />
+
+              <button
+                type="button"
+                onClick={useMyLocation}
+                disabled={locating || addressLoading}
+                className="flex shrink-0 items-center gap-1 rounded-lg border border-brand-500 px-4 text-xs font-semibold text-brand-600 hover:bg-brand-50 disabled:opacity-60"
+              >
+
+                <MdOutlineMyLocation size={18} />
+
+                {locating
+                  ? "Locating..."
+                  : addressLoading
+                  ? "Finding..."
+                  : "Use My Location"}
+
+              </button>
+
             </div>
 
-            <div>
-              <label className="mb-1 block text-sm font-medium text-ink">
-                Description
-              </label>
+            {/* OPENSTREETMAP */}
 
-              <textarea
-                required
-                rows={5}
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Describe the problem in detail..."
-                className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
-              />
+            <div className="mt-3 overflow-hidden rounded-xl border border-slate-200">
+
+              <MapContainer
+                center={
+                  coords
+                    ? [coords.lat, coords.lng]
+                    : defaultCenter
+                }
+                zoom={coords ? 17 : 12}
+                scrollWheelZoom={true}
+                style={{
+                  width: "100%",
+                  height: "350px",
+                }}
+              >
+
+                <TileLayer
+                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                />
+
+                <LocationMarker
+                  coords={coords}
+                  onSelect={handleMapClickLocation}
+                />
+
+              </MapContainer>
+
             </div>
 
-            <div>
-              <label className="mb-1 block text-sm font-medium text-ink">
-                Location
-              </label>
+            <p className="mt-2 text-xs text-slate-500">
+              Click anywhere on the map to select the complaint location.
+              The address will be detected automatically.
+            </p>
 
-              <div className="flex gap-2">
+            {addressLoading && (
+              <p className="mt-2 text-xs font-medium text-brand-600">
+                Finding your address...
+              </p>
+            )}
+
+            {coords && (
+              <div className="mt-2 rounded-lg bg-mist p-3 text-xs text-slate-600">
+
+                <p className="font-semibold text-ink">
+                  Selected Location
+                </p>
+
+                <p className="mt-1">
+                  {location || "Finding address..."}
+                </p>
+
+              </div>
+            )}
+
+            {locationError && (
+              <p className="mt-2 text-xs font-medium text-rose-500">
+                {locationError}
+              </p>
+            )}
+
+          </div>
+
+          {/* PHOTO */}
+
+          <div>
+
+            <label className="mb-1 block text-sm font-medium text-ink">
+              Upload Problem Photo
+            </label>
+
+            {!photo ? (
+
+              <label className="flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-200 py-8 text-center hover:border-brand-400">
+
+                <MdOutlineCloudUpload
+                  size={28}
+                  className="text-brand-500"
+                />
+
+                <span className="mt-2 text-sm text-slate">
+                  Click to upload a JPG or PNG
+                  {" "}
+                  (max {MAX_FILE_SIZE_MB}MB)
+                </span>
+
                 <input
-                  type="text"
-                  required
-                  value={location}
-                  onChange={(e) => setLocation(e.target.value)}
-                  placeholder="Enter your location"
-                  className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/jpg,image/png"
+                  onChange={handleFile}
+                  className="hidden"
+                />
+
+              </label>
+
+            ) : (
+
+              <div className="relative w-fit">
+
+                <img
+                  src={photo}
+                  alt="Problem preview"
+                  className="h-40 rounded-xl object-cover"
                 />
 
                 <button
                   type="button"
-                  onClick={useMyLocation}
-                  disabled={locating}
-                  className="flex shrink-0 items-center gap-1 rounded-lg border border-brand-500 px-4 text-xs font-semibold text-brand-600 hover:bg-brand-50 disabled:opacity-60"
+                  onClick={removePhoto}
+                  className="absolute -right-2 -top-2 rounded-full bg-rose-500 p-1 text-white"
                 >
-                  <MdOutlineMyLocation />
-                  {locating ? "Locating..." : "Use My Location"}
+                  <MdClose size={16} />
                 </button>
+
               </div>
 
-              <p className="mt-1 text-xs text-slate">
-                Location is included with the complaint details.
+            )}
+
+            {fileError && (
+              <p className="mt-2 text-xs font-medium text-rose-500">
+                {fileError}
               </p>
-            </div>
+            )}
 
-            <div>
-              <label className="mb-1 block text-sm font-medium text-ink">
-                Upload Problem Photo
-              </label>
+          </div>
 
-              {!photo ? (
-                <label className="flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-200 py-8 text-center hover:border-brand-400">
-                  <MdOutlineCloudUpload
-                    size={28}
-                    className="text-brand-500"
-                  />
+          {/* SUBMIT ERROR */}
 
-                  <span className="mt-2 text-sm text-slate">
-                    Click to upload a JPG or PNG (max{" "}
-                    {MAX_FILE_SIZE_MB}MB)
-                  </span>
+          {submitError && (
+            <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-500">
+              {submitError}
+            </p>
+          )}
 
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/jpeg,image/jpg,image/png"
-                    onChange={handleFile}
-                    className="hidden"
-                  />
-                </label>
-              ) : (
-                <div className="relative w-fit">
-                  <img
-                    src={photo}
-                    alt="Problem preview"
-                    className="h-40 rounded-xl object-cover"
-                  />
+          {/* SUBMIT */}
 
-                  <button
-                    type="button"
-                    onClick={removePhoto}
-                    className="absolute -right-2 -top-2 rounded-full bg-rose-500 p-1 text-white"
-                  >
-                    <MdClose size={16} />
-                  </button>
+          <button
+            type="submit"
+            disabled={submitting || addressLoading}
+            className="w-full rounded-lg bg-brand-500 py-3 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-60"
+          >
+            {submitting
+              ? "Submitting..."
+              : "Submit Complaint"}
+          </button>
 
-                  <label className="mt-2 block cursor-pointer text-center text-xs font-semibold text-brand-600 hover:underline">
-                    Upload another image
+        </form>
 
-                    <input
-                      type="file"
-                      accept="image/jpeg,image/jpg,image/png"
-                      onChange={handleFile}
-                      className="hidden"
-                    />
-                  </label>
-                </div>
-              )}
-
-              {fileError && (
-                <p className="mt-2 text-xs font-medium text-rose-500">
-                  {fileError}
-                </p>
-              )}
-            </div>
-
-            <button
-              type="submit"
-              disabled={submitting || blocked}
-              className="w-full rounded-lg bg-brand-500 py-3 text-sm font-semibold text-white hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {submitting
-                ? "Analyzing & Submitting..."
-                : "Submit Complaint"}
-            </button>
-          </form>
-        )}
       </main>
     </div>
   );
