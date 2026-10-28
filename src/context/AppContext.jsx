@@ -1,18 +1,33 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
 
 const AppContext = createContext(null);
 
-const API_URL =
-  import.meta.env.VITE_API_URL || "http://localhost:4000/api";
+const API_URL = (
+  import.meta.env.VITE_API_URL ||
+  "http://localhost:4000/api"
+).replace(/\/+$/, "");
 
-async function apiRequest(path, options = {}) {
+// API request helper
+async function apiRequest(path, options = {}, token = null) {
   try {
+    const headers = {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    };
+
+    // Send JWT token for authenticated requests
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+
     const response = await fetch(`${API_URL}${path}`, {
-      headers: {
-        "Content-Type": "application/json",
-        ...(options.headers || {}),
-      },
       ...options,
+      headers,
     });
 
     const data = await response.json().catch(() => ({}));
@@ -44,7 +59,9 @@ async function apiRequest(path, options = {}) {
 export function AppProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(() => {
     try {
-      return JSON.parse(localStorage.getItem("janSevaUser")) || null;
+      return JSON.parse(
+        localStorage.getItem("janSevaUser")
+      ) || null;
     } catch {
       return null;
     }
@@ -53,10 +70,13 @@ export function AppProvider({ children }) {
   const [complaints, setComplaints] = useState([]);
   const [notifications, setNotifications] = useState([]);
 
-  // Save logged-in user in localStorage
+  // Save logged-in session
   useEffect(() => {
     if (currentUser) {
-      localStorage.setItem("janSevaUser", JSON.stringify(currentUser));
+      localStorage.setItem(
+        "janSevaUser",
+        JSON.stringify(currentUser)
+      );
     } else {
       localStorage.removeItem("janSevaUser");
     }
@@ -64,10 +84,21 @@ export function AppProvider({ children }) {
 
   // Fetch complaints
   async function fetchComplaints() {
-    const result = await apiRequest("/complaints");
+    const token =
+      currentUser?.role === "government"
+        ? currentUser.token
+        : null;
+
+    const result = await apiRequest(
+      "/complaints",
+      {},
+      token
+    );
 
     if (result.ok) {
-      setComplaints(result.data.complaints || result.data || []);
+      setComplaints(
+        result.data.complaints || result.data || []
+      );
     }
 
     return result;
@@ -82,19 +113,28 @@ export function AppProvider({ children }) {
     )}`;
 
     if (currentUser.role === "citizen") {
-      path += `&email=${encodeURIComponent(currentUser.email || "")}`;
+      path += `&email=${encodeURIComponent(
+        currentUser.email || ""
+      )}`;
     }
 
-    const result = await apiRequest(path);
+    const token =
+      currentUser.role === "government"
+        ? currentUser.token
+        : null;
+
+    const result = await apiRequest(path, {}, token);
 
     if (result.ok) {
-      setNotifications(result.data.notifications || result.data || []);
+      setNotifications(
+        result.data.notifications || result.data || []
+      );
     }
 
     return result;
   }
 
-  // Load data whenever user changes
+  // Load data whenever session changes
   useEffect(() => {
     if (!currentUser) {
       setComplaints([]);
@@ -104,65 +144,24 @@ export function AppProvider({ children }) {
 
     fetchComplaints();
     fetchNotifications();
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser]);
 
-  // =========================
   // CITIZEN LOGIN
-  // =========================
   async function loginCitizen(emailOrPhone, password) {
-    const result = await apiRequest("/auth/citizen/login", {
-      method: "POST",
-      body: JSON.stringify({
-        emailOrPhone,
-        password,
-      }),
-    });
+    const result = await apiRequest(
+      "/auth/citizen/login",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          emailOrPhone,
+          password,
+        }),
+      }
+    );
 
-    if (!result.ok) {
-      return result;
-    }
-
-    const user = result.data.user;
-
-    if (!user) {
-      return {
-        ok: false,
-        error: "User data not received from server.",
-      };
-    }
-
-    const session = {
-      role: "citizen",
-      id: user.id,
-      name: user.name,
-      email: user.email,
-    };
-
-    setCurrentUser(session);
-
-    return {
-      ok: true,
-      user: session,
-    };
-  }
-
-  // =========================
-  // CITIZEN REGISTER
-  // =========================
-  async function registerCitizen(name, email, phone, password) {
-    const result = await apiRequest("/auth/citizen/register", {
-      method: "POST",
-      body: JSON.stringify({
-        name,
-        email,
-        phone,
-        password,
-      }),
-    });
-
-    if (!result.ok) {
-      return result;
-    }
+    if (!result.ok) return result;
 
     const user = result.data.user;
 
@@ -188,28 +187,74 @@ export function AppProvider({ children }) {
     };
   }
 
-  // =========================
+  // CITIZEN REGISTRATION
+  async function registerCitizen(
+    name,
+    email,
+    phone,
+    password
+  ) {
+    const result = await apiRequest(
+      "/auth/citizen/register",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          email,
+          phone,
+          password,
+        }),
+      }
+    );
+
+    if (!result.ok) return result;
+
+    const user = result.data.user;
+
+    if (!user) {
+      return {
+        ok: false,
+        error: "User data not received from server.",
+      };
+    }
+
+    const session = {
+      role: "citizen",
+      id: user.id,
+      name: user.name,
+      email: user.email,
+    };
+
+    setCurrentUser(session);
+
+    return {
+      ok: true,
+      user: session,
+    };
+  }
+
   // GOVERNMENT LOGIN
-  // =========================
   async function loginGovernment(id, password) {
-    const result = await apiRequest("/auth/government/login", {
-      method: "POST",
-      body: JSON.stringify({
-        id,
-        password,
-      }),
-    });
+    const result = await apiRequest(
+      "/auth/government/login",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          id,
+          password,
+        }),
+      }
+    );
 
-    if (!result.ok) {
-      return result;
-    }
+    if (!result.ok) return result;
 
     const officer = result.data.officer;
+    const token = result.data.token;
 
-    if (!officer) {
+    if (!officer || !token) {
       return {
         ok: false,
-        error: "Government officer data not received from server.",
+        error: "Government officer data or token missing.",
       };
     }
 
@@ -217,6 +262,7 @@ export function AppProvider({ children }) {
       role: "government",
       id: officer.id,
       name: officer.name,
+      token,
     };
 
     setCurrentUser(session);
@@ -227,24 +273,26 @@ export function AppProvider({ children }) {
     };
   }
 
-  // =========================
   // LOGOUT
-  // =========================
   function logout() {
     setCurrentUser(null);
   }
 
-  // =========================
   // CREATE COMPLAINT
-  // =========================
   async function createComplaint(complaintData) {
-    const result = await apiRequest("/complaints", {
-      method: "POST",
-      body: JSON.stringify({
-        ...complaintData,
-        citizenEmail: currentUser?.email,
-      }),
-    });
+    const result = await apiRequest(
+      "/complaints",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          ...complaintData,
+          citizenEmail: currentUser?.email,
+        }),
+      },
+      currentUser?.role === "government"
+        ? currentUser.token
+        : null
+    );
 
     if (result.ok) {
       await fetchComplaints();
@@ -253,14 +301,21 @@ export function AppProvider({ children }) {
     return result;
   }
 
-  // =========================
   // UPDATE COMPLAINT STATUS
-  // =========================
   async function updateComplaintStatus(id, statusData) {
-    const result = await apiRequest(`/complaints/${id}/status`, {
-      method: "PATCH",
-      body: JSON.stringify(statusData),
-    });
+    const token =
+      currentUser?.role === "government"
+        ? currentUser.token
+        : null;
+
+    const result = await apiRequest(
+      `/complaints/${encodeURIComponent(id)}/status`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(statusData),
+      },
+      token
+    );
 
     if (result.ok) {
       await fetchComplaints();
@@ -268,6 +323,25 @@ export function AppProvider({ children }) {
     }
 
     return result;
+  }
+
+  // GET SIMILAR COMPLAINTS (GOVERNMENT ONLY)
+  async function fetchDuplicateComplaints(id) {
+    if (
+      currentUser?.role !== "government" ||
+      !currentUser.token
+    ) {
+      return {
+        ok: false,
+        error: "Please log in as a government officer again.",
+      };
+    }
+
+    return apiRequest(
+      `/complaints/${encodeURIComponent(id)}/duplicates`,
+      {},
+      currentUser.token
+    );
   }
 
   const value = {
@@ -288,6 +362,7 @@ export function AppProvider({ children }) {
 
     createComplaint,
     updateComplaintStatus,
+    fetchDuplicateComplaints,
 
     fetchComplaints,
     fetchNotifications,

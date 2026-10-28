@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import Sidebar from "../components/Sidebar.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
@@ -8,7 +8,13 @@ import { STATUS } from "../data/mockData.js";
 export default function GovernmentComplaintDetails() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { complaints, updateComplaintStatus } = useApp();
+
+  const {
+    complaints,
+    updateComplaintStatus,
+    fetchDuplicateComplaints,
+    currentUser,
+  } = useApp();
 
   const complaint = complaints.find(
     (c) => String(c.id) === String(id)
@@ -22,6 +28,37 @@ export default function GovernmentComplaintDetails() {
   const [showResolveForm, setShowResolveForm] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const [duplicates, setDuplicates] = useState([]);
+  const [duplicatesLoading, setDuplicatesLoading] = useState(false);
+  const [duplicatesError, setDuplicatesError] = useState("");
+  const [duplicatesChecked, setDuplicatesChecked] = useState(false);
+
+  useEffect(() => {
+    setRemarks(complaint?.govRemarks || "");
+  }, [complaint?.id, complaint?.govRemarks]);
+
+  async function loadDuplicates() {
+    if (!complaint?.id) return;
+
+    setDuplicatesLoading(true);
+    setDuplicatesError("");
+    setDuplicatesChecked(false);
+
+    const result = await fetchDuplicateComplaints(complaint.id);
+
+    if (result?.ok) {
+      setDuplicates(result.data.matches || []);
+      setDuplicatesChecked(true);
+    } else {
+      setDuplicates([]);
+      setDuplicatesError(
+        result?.error || "Unable to load similar complaints."
+      );
+    }
+
+    setDuplicatesLoading(false);
+  }
 
   if (!complaint) {
     return (
@@ -101,6 +138,7 @@ export default function GovernmentComplaintDetails() {
 
     const result = await updateComplaintStatus(complaint.id, {
       status: STATUS.RESOLVED,
+      govRemarks: remarks,
       resolutionRemarks,
       resolutionPhoto,
     });
@@ -155,7 +193,6 @@ export default function GovernmentComplaintDetails() {
 
         <div className="mt-6 grid gap-6 lg:grid-cols-3">
           <div className="space-y-6 lg:col-span-2">
-
             <div className="rounded-2xl border border-slate-100 bg-white p-6">
               <h2 className="font-display text-sm font-semibold text-ink">
                 Complaint details
@@ -163,29 +200,18 @@ export default function GovernmentComplaintDetails() {
 
               <dl className="mt-4 grid grid-cols-2 gap-4 text-sm">
                 <div>
-                  <dt className="text-xs text-slate">
-                    Category
-                  </dt>
-                  <dd className="font-medium">
-                    {complaint.category}
-                  </dd>
+                  <dt className="text-xs text-slate">Category</dt>
+                  <dd className="font-medium">{complaint.category}</dd>
                 </div>
 
                 <div>
-                  <dt className="text-xs text-slate">
-                    Location
-                  </dt>
-                  <dd className="font-medium">
-                    {complaint.location}
-                  </dd>
+                  <dt className="text-xs text-slate">Location</dt>
+                  <dd className="font-medium">{complaint.location}</dd>
                 </div>
               </dl>
 
               <div className="mt-4">
-                <dt className="text-xs text-slate">
-                  Description
-                </dt>
-
+                <dt className="text-xs text-slate">Description</dt>
                 <dd className="mt-1 text-sm text-ink">
                   {complaint.description}
                 </dd>
@@ -196,7 +222,6 @@ export default function GovernmentComplaintDetails() {
                   <dt className="mb-2 text-xs text-slate">
                     Complaint photo
                   </dt>
-
                   <img
                     src={complaint.photo}
                     alt="Complaint"
@@ -209,6 +234,115 @@ export default function GovernmentComplaintDetails() {
                 </p>
               )}
             </div>
+
+            {/* Similar complaints */}
+            <section className="rounded-2xl border border-amber-200 bg-white p-6">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="font-display text-sm font-semibold text-ink">
+                    Similar Complaints
+                  </h2>
+                  <p className="mt-1 text-xs text-slate">
+                    Possible matches for officer review only.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={loadDuplicates}
+                  disabled={duplicatesLoading}
+                  className="rounded-lg bg-brand-500 px-4 py-2 text-xs font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+                >
+                  {duplicatesLoading
+                    ? "Checking..."
+                    : duplicatesChecked
+                      ? "Check Again"
+                      : "Find Similar"}
+                </button>
+              </div>
+
+              {duplicatesError && (
+                <p className="mt-4 rounded-lg bg-rose-50 p-3 text-sm text-rose-600">
+                  {duplicatesError}
+                </p>
+              )}
+
+              {duplicatesLoading && (
+                <p className="mt-4 text-sm text-slate">
+                  Searching for similar complaints...
+                </p>
+              )}
+
+              {!duplicatesLoading &&
+                duplicatesChecked &&
+                duplicates.length === 0 && (
+                  <p className="mt-4 rounded-lg bg-leaf-50 p-3 text-sm text-leaf-600">
+                    No possible duplicate complaints found.
+                  </p>
+                )}
+
+              {!duplicatesLoading && duplicates.length > 0 && (
+                <div className="mt-4 space-y-3">
+                  {duplicates.map((item) => (
+                    <article
+                      key={item.id}
+                      className="rounded-xl border border-slate-200 p-4"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="text-xs font-semibold text-brand-600">
+                            {item.id}
+                          </p>
+                          <h3 className="mt-1 text-sm font-semibold text-ink">
+                            {item.title}
+                          </h3>
+                        </div>
+
+                        <span className="rounded-full bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700">
+                          {item.score}% match score
+                        </span>
+                      </div>
+
+                      <p className="mt-2 text-sm text-slate">
+                        {item.description}
+                      </p>
+
+                      <div className="mt-3 grid gap-2 text-xs text-slate sm:grid-cols-2">
+                        <p>
+                          <strong>Location:</strong>{" "}
+                          {item.location || "Not provided"}
+                        </p>
+                        <p>
+                          <strong>Status:</strong> {item.status}
+                        </p>
+                        <p>
+                          <strong>Text similarity:</strong>{" "}
+                          {item.textSimilarity}%
+                        </p>
+                        <p>
+                          <strong>Distance:</strong>{" "}
+                          {item.distanceMeters == null
+                            ? "Unavailable"
+                            : `${item.distanceMeters} metres`}
+                        </p>
+                      </div>
+
+                      <p className="mt-3 text-xs text-amber-700">
+                        Verify manually before marking this as a duplicate.
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              )}
+
+              {!duplicatesLoading &&
+                !duplicatesChecked &&
+                !duplicatesError && (
+                  <p className="mt-4 text-sm text-slate">
+                    Select “Find Similar” to check other complaints in this category.
+                  </p>
+                )}
+            </section>
 
             <div className="rounded-2xl border border-slate-100 bg-white p-6">
               <h2 className="font-display text-sm font-semibold text-ink">
@@ -226,7 +360,7 @@ export default function GovernmentComplaintDetails() {
               <button
                 onClick={saveRemarks}
                 disabled={loading}
-                className="mt-3 rounded-lg border border-brand-500 px-4 py-2 text-xs font-semibold text-brand-600 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-50"
+                className="mt-3 rounded-lg border border-brand-500 px-4 py-2 text-xs font-semibold text-brand-600 hover:bg-brand-50 disabled:opacity-50"
               >
                 {loading ? "Saving..." : "Save Remarks"}
               </button>
@@ -249,9 +383,7 @@ export default function GovernmentComplaintDetails() {
                   required
                   rows={3}
                   value={resolutionRemarks}
-                  onChange={(e) =>
-                    setResolutionRemarks(e.target.value)
-                  }
+                  onChange={(e) => setResolutionRemarks(e.target.value)}
                   placeholder="Describe how the problem was resolved..."
                   className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-leaf-500 focus:outline-none"
                 />
@@ -279,11 +411,9 @@ export default function GovernmentComplaintDetails() {
                   <button
                     type="submit"
                     disabled={loading}
-                    className="rounded-lg bg-leaf-500 px-4 py-2 text-xs font-semibold text-white hover:bg-leaf-600 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="rounded-lg bg-leaf-500 px-4 py-2 text-xs font-semibold text-white hover:bg-leaf-600 disabled:opacity-50"
                   >
-                    {loading
-                      ? "Updating..."
-                      : "Confirm Resolved"}
+                    {loading ? "Updating..." : "Confirm Resolved"}
                   </button>
 
                   <button
@@ -312,7 +442,7 @@ export default function GovernmentComplaintDetails() {
                     loading ||
                     complaint.status !== STATUS.PENDING
                   }
-                  className="rounded-lg bg-brand-500 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded-lg bg-brand-500 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-40"
                 >
                   {loading ? "Updating..." : "Start Work"}
                 </button>
@@ -324,7 +454,7 @@ export default function GovernmentComplaintDetails() {
                     complaint.status === STATUS.RESOLVED ||
                     complaint.status === STATUS.REJECTED
                   }
-                  className="rounded-lg bg-leaf-500 py-2.5 text-sm font-semibold text-white hover:bg-leaf-600 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded-lg bg-leaf-500 py-2.5 text-sm font-semibold text-white hover:bg-leaf-600 disabled:opacity-40"
                 >
                   Mark as Resolved
                 </button>
@@ -336,7 +466,7 @@ export default function GovernmentComplaintDetails() {
                     complaint.status === STATUS.RESOLVED ||
                     complaint.status === STATUS.REJECTED
                   }
-                  className="rounded-lg border border-rose-500 py-2.5 text-sm font-semibold text-rose-500 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded-lg border border-rose-500 py-2.5 text-sm font-semibold text-rose-500 hover:bg-rose-50 disabled:opacity-40"
                 >
                   {loading ? "Updating..." : "Reject Complaint"}
                 </button>
